@@ -14,7 +14,12 @@ func checkLowerCase(pass *analysis.Pass, log *logCall) {
 		return
 	}
 
-	firstChar := []rune(log.message)[0]
+	runes := []rune(log.message)
+	if len(runes) == 0 {
+		return
+	}
+
+	firstChar := runes[0]
 
 	if unicode.IsLetter(firstChar) && !unicode.IsLower(firstChar) {
 		pass.Reportf(log.pos, "log message should start with a lowercase letter (found %q)", firstChar)
@@ -45,19 +50,31 @@ func checkSpecialChars(pass *analysis.Pass, log *logCall) {
 		return
 	}
 
-	for i, r := range log.message {
+	runes := []rune(log.message)
+
+	// Эмодзи и запрещённые символы
+	for _, r := range runes {
 		if isEmoji(r) || isForbiddenPunctuation(r) {
-			pass.Reportf(log.pos, "log message should not contain special characters or emojis (found %q at position %d)", r, i+1)
+			pass.Reportf(log.pos, "special characters or emojis")
 			return
 		}
 	}
 
-	trimmed := strings.TrimRightFunc(log.message, func(r rune) bool {
-		return r == '!' || r == '?' || r == '.'
-	})
+	last := runes[len(runes)-1]
 
-	if len(trimmed) < len(log.message) && len(log.message)-len(trimmed) > 1 {
-		pass.Reportf(log.pos, "log message should not contain multiple punctuation marks at the end")
+	if last == '!' || last == '.' {
+		pass.Reportf(log.pos, "multiple punctuation marks")
+		return
+	}
+
+	if last == '?' {
+		if len(runes) > 1 {
+			prev := runes[len(runes)-2]
+			if prev == '?' || prev == '!' || prev == '.' {
+				pass.Reportf(log.pos, "multiple punctuation marks")
+				return
+			}
+		}
 	}
 }
 
@@ -67,24 +84,43 @@ func checkSensitive(pass *analysis.Pass, log *logCall) {
 		return
 	}
 
-	sensitiveWords := []string{
-		"password", "pass", "pwd",
-		"token", "secret", "key",
-		"api_key", "apikey",
-		"credit", "card", "ssn",
-		"auth", "credentials",
+	msg := strings.ToLower(log.message)
+
+	keywords := []string{
+		"password",
+		"pwd",
+		"token",
+		"secret",
+		"api_key",
+		"apikey",
+		"ssn",
+		"credentials",
 	}
 
-	messageLower := strings.ToLower(log.message)
-
-	for _, word := range sensitiveWords {
-		if strings.Contains(messageLower, word) {
-			pass.Reportf(log.pos, "log message may contain sensitive data: %q", word)
+	for _, kw := range keywords {
+		if strings.Contains(msg, kw) {
+			pass.Reportf(log.pos, "sensitive data")
 			return
 		}
 	}
 
-	// добавить проверку аргументов
+	if strings.Contains(msg, "credit card") {
+		pass.Reportf(log.pos, "sensitive data")
+		return
+	}
+
+	words := strings.FieldsFunc(msg, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_'
+	})
+
+	for _, w := range words {
+		if strings.HasPrefix(w, "password") ||
+			strings.HasPrefix(w, "secret") ||
+			strings.HasPrefix(w, "token") {
+			pass.Reportf(log.pos, "sensitive data")
+			return
+		}
+	}
 }
 
 func isLatinLetter(r rune) bool {
@@ -112,17 +148,15 @@ func isForbiddenPunctuation(r rune) bool {
 }
 
 func isEmoji(r rune) bool {
-	// Диапазоны эмодзи в Unicode
-	return (r >= 0x1F600 && r <= 0x1F64F) || // Эмотиконы
-		(r >= 0x1F300 && r <= 0x1F5FF) || // Символы и пиктограммы
-		(r >= 0x1F680 && r <= 0x1F6FF) || // Транспорт и символы
-		(r >= 0x2600 && r <= 0x26FF) || // Разные символы
-		(r >= 0x2700 && r <= 0x27BF) || // Символы Dingbats
-		(r >= 0xFE00 && r <= 0xFE0F) || // Варианты селекторов
-		(r >= 0x1F900 && r <= 0x1F9FF) // Дополнительные символы
+	return (r >= 0x1F600 && r <= 0x1F64F) ||
+		(r >= 0x1F300 && r <= 0x1F5FF) ||
+		(r >= 0x1F680 && r <= 0x1F6FF) ||
+		(r >= 0x2600 && r <= 0x26FF) ||
+		(r >= 0x2700 && r <= 0x27BF) ||
+		(r >= 0xFE00 && r <= 0xFE0F) ||
+		(r >= 0x1F900 && r <= 0x1F9FF)
 }
 
-// добавить регулярные выражения
 var (
 	emailRegex      = regexp.MustCompile(`[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}`)
 	creditCardRegex = regexp.MustCompile(`\b(?:\d[ -]*?){13,16}\b`)

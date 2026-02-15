@@ -64,31 +64,18 @@ func isLogCall(call *ast.CallExpr) (string, string, bool) {
 		return "", "", false
 	}
 
-	x, ok := fun.X.(*ast.Ident)
-	if !ok {
-		return "", "", false
-	}
-
-	pkgName := x.Name
 	methodName := fun.Sel.Name
 
-	if pkgName == "slog" {
-		switch methodName {
-		case "Debug", "Info", "Warn", "Error":
-			return "slog", methodName, true
+	switch methodName {
+	case "Debug", "Info", "Warn", "Error":
+		if ident, ok := fun.X.(*ast.Ident); ok {
+			if ident.Name == "slog" {
+				return "slog", methodName, true
+			}
 		}
-	}
 
-	// базовые случаи
-	if pkgName == "zap" {
-		switch methodName {
-		case "Debug", "Info", "Warn", "Error":
-			return "zap", methodName, true
-		}
+		return "zap", methodName, true
 	}
-
-	// добавить поддержку цепочек вызовов
-	// добавить поддержку sugared logger
 
 	return "", "", false
 }
