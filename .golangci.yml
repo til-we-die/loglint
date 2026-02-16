@@ -1,0 +1,9 @@
+linters-settings:
+  custom:
+    loglint:
+      path: /path/to/loglint.so
+      config: /path/to/.loglint.json
+
+linters:
+  enable:
+    - loglint

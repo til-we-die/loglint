@@ -1,0 +1,47 @@
+{
+  "enable_rules": ["lowercase", "english", "special_chars", "sensitive"],
+
+  "custom_sensitive_keywords": [
+    "apikey",
+    "private_key",
+    "access_token",
+    "jwt"
+  ],
+
+  "custom_sensitive_patterns": [
+    "\\\\b[A-Z]{5,}\\\\b",
+    "key-[a-f0-9]{32}"
+  ],
+
+  "custom_zap_sensitive_keys": [
+    "jwt",
+    "private_key",
+    "access_token"
+  ],
+
+  "lowercase": {
+    "enabled": true,
+    "allow_numbers": true,
+    "allow_symbols": true
+  },
+
+  "english": {
+    "enabled": true,
+    "allowed_non_latin": ["é", "ü", "ß"]
+  },
+
+  "special_chars": {
+    "enabled": true,
+    "allow_emojis": false,
+    "allow_special": false
+  },
+
+  "sensitive": {
+    "enabled": true,
+    "extra_patterns": [
+      "\\\\b\\\\d{16}\\\\b",
+      "\\\\b[0-9a-f]{64}\\\\b"
+    ],
+    "strict_mode": true
+  }
+}
