@@ -21,6 +21,6 @@ func main() {
 	logger := zap.NewExample()
 	logger.Info("user login",
 		zap.String("username", "admin"),
-		zap.String("password", "secret"),
+		zap.String("password", "secret"), // want "sensitive data in zap field"
 	)
 }

@@ -11,8 +11,8 @@ import (
 )
 
 // Проверка на строчную букву
-func checkLowerCase(pass *analysis.Pass, log *logCall) {
-	if log.message == "" {
+func checkLowerCase(pass *analysis.Pass, log *logCall, cfg *Config) {
+	if !cfg.LowerCase.Enabled || log.message == "" {
 		return
 	}
 
@@ -23,19 +23,38 @@ func checkLowerCase(pass *analysis.Pass, log *logCall) {
 
 	firstChar := runes[0]
 
+	if cfg.LowerCase.AllowNumbers && unicode.IsDigit(firstChar) {
+		return
+	}
+
+	if cfg.LowerCase.AllowSymbols && !unicode.IsLetter(firstChar) && !unicode.IsDigit(firstChar) {
+		return
+	}
+
 	if unicode.IsLetter(firstChar) && !unicode.IsLower(firstChar) {
 		pass.Reportf(log.pos, "log message should start with a lowercase letter (found %q)", firstChar)
 	}
 }
 
 // Проверка на английский язык
-func checkEnglish(pass *analysis.Pass, log *logCall) {
-	if log.message == "" {
+func checkEnglish(pass *analysis.Pass, log *logCall, cfg *Config) {
+	if !cfg.English.Enabled || log.message == "" {
 		return
+	}
+
+	allowedNonLatin := make(map[rune]bool)
+	for _, s := range cfg.English.AllowedNonLatin {
+		for _, r := range s {
+			allowedNonLatin[r] = true
+		}
 	}
 
 	for _, r := range log.message {
 		if unicode.IsSpace(r) || unicode.IsDigit(r) || isAllowedPunctuation(r) {
+			continue
+		}
+
+		if allowedNonLatin[r] {
 			continue
 		}
 
@@ -47,8 +66,8 @@ func checkEnglish(pass *analysis.Pass, log *logCall) {
 }
 
 // Проверка на спецсимволы и эмодзи
-func checkSpecialChars(pass *analysis.Pass, log *logCall) {
-	if log.message == "" {
+func checkSpecialChars(pass *analysis.Pass, log *logCall, cfg *Config) {
+	if !cfg.SpecialChars.Enabled || log.message == "" {
 		return
 	}
 
@@ -56,33 +75,40 @@ func checkSpecialChars(pass *analysis.Pass, log *logCall) {
 
 	// Эмодзи и запрещённые символы
 	for _, r := range runes {
-		if isEmoji(r) || isForbiddenPunctuation(r) {
+		if !cfg.SpecialChars.AllowEmojis && isEmoji(r) {
+			pass.Reportf(log.pos, "special characters or emojis")
+			return
+		}
+		if !cfg.SpecialChars.AllowSpecial && isForbiddenPunctuation(r) {
 			pass.Reportf(log.pos, "special characters or emojis")
 			return
 		}
 	}
 
-	last := runes[len(runes)-1]
+	// Проверка на множественные знаки препинания
+	if !cfg.SpecialChars.AllowSpecial {
+		last := runes[len(runes)-1]
 
-	if last == '!' || last == '.' {
-		pass.Reportf(log.pos, "multiple punctuation marks")
-		return
-	}
+		if last == '!' || last == '.' {
+			pass.Reportf(log.pos, "multiple punctuation marks")
+			return
+		}
 
-	if last == '?' {
-		if len(runes) > 1 {
-			prev := runes[len(runes)-2]
-			if prev == '?' || prev == '!' || prev == '.' {
-				pass.Reportf(log.pos, "multiple punctuation marks")
-				return
+		if last == '?' {
+			if len(runes) > 1 {
+				prev := runes[len(runes)-2]
+				if prev == '?' || prev == '!' || prev == '.' {
+					pass.Reportf(log.pos, "multiple punctuation marks")
+					return
+				}
 			}
 		}
 	}
 }
 
 // Проверка на чувствительные данные
-func checkSensitive(pass *analysis.Pass, log *logCall) {
-	if log.message == "" {
+func checkSensitive(pass *analysis.Pass, log *logCall, cfg *Config) {
+	if !cfg.Sensitive.Enabled || log.message == "" {
 		return
 	}
 
@@ -99,8 +125,18 @@ func checkSensitive(pass *analysis.Pass, log *logCall) {
 		"credentials",
 	}
 
+	keywords = append(keywords, cfg.CustomSensitiveKeywords...)
+
 	for _, kw := range keywords {
 		if strings.Contains(msg, kw) {
+			pass.Reportf(log.pos, "sensitive data")
+			return
+		}
+	}
+
+	allPatterns := append(cfg.Sensitive.ExtraPatterns, cfg.CustomSensitivePatterns...)
+	for _, pattern := range allPatterns {
+		if matched, _ := regexp.MatchString(pattern, msg); matched {
 			pass.Reportf(log.pos, "sensitive data")
 			return
 		}
@@ -111,21 +147,23 @@ func checkSensitive(pass *analysis.Pass, log *logCall) {
 		return
 	}
 
-	words := strings.FieldsFunc(msg, func(r rune) bool {
-		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_'
-	})
+	if cfg.Sensitive.StrictMode {
+		words := strings.FieldsFunc(msg, func(r rune) bool {
+			return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_'
+		})
 
-	for _, w := range words {
-		if strings.HasPrefix(w, "password") ||
-			strings.HasPrefix(w, "secret") ||
-			strings.HasPrefix(w, "token") {
-			pass.Reportf(log.pos, "sensitive data")
-			return
+		for _, w := range words {
+			if strings.HasPrefix(w, "password") ||
+				strings.HasPrefix(w, "secret") ||
+				strings.HasPrefix(w, "token") {
+				pass.Reportf(log.pos, "sensitive data")
+				return
+			}
 		}
 	}
 }
 
-func checkZapFields(pass *analysis.Pass, log *logCall) {
+func checkZapFields(pass *analysis.Pass, log *logCall, cfg *Config) {
 	if log.logger != "zap" {
 		return
 	}
@@ -141,6 +179,8 @@ func checkZapFields(pass *analysis.Pass, log *logCall) {
 		"credentials",
 	}
 
+	sensitiveKeys = append(sensitiveKeys, cfg.CustomZapSensitiveKeys...)
+
 	for _, arg := range log.call.Args[1:] {
 		call, ok := arg.(*ast.CallExpr)
 		if !ok {
@@ -152,8 +192,7 @@ func checkZapFields(pass *analysis.Pass, log *logCall) {
 			continue
 		}
 
-		funcName := sel.Sel.Name
-		if funcName == "" {
+		if sel.Sel.Name == "" {
 			continue
 		}
 
@@ -170,11 +209,19 @@ func checkZapFields(pass *analysis.Pass, log *logCall) {
 
 		for _, sensitive := range sensitiveKeys {
 			if strings.Contains(key, sensitive) {
-				pass.Reportf(log.pos, "sensitive data in zap field")
+				pass.Reportf(call.Pos(), "sensitive data in zap field")
 				return
 			}
 		}
 	}
+}
+
+func checkRules(pass *analysis.Pass, log *logCall, cfg *Config) {
+	checkLowerCase(pass, log, cfg)
+	checkEnglish(pass, log, cfg)
+	checkSpecialChars(pass, log, cfg)
+	checkSensitive(pass, log, cfg)
+	checkZapFields(pass, log, cfg)
 }
 
 func isLatinLetter(r rune) bool {
