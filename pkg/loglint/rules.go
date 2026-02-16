@@ -1,6 +1,8 @@
 package loglint
 
 import (
+	"go/ast"
+	"go/token"
 	"regexp"
 	"strings"
 	"unicode"
@@ -119,6 +121,58 @@ func checkSensitive(pass *analysis.Pass, log *logCall) {
 			strings.HasPrefix(w, "token") {
 			pass.Reportf(log.pos, "sensitive data")
 			return
+		}
+	}
+}
+
+func checkZapFields(pass *analysis.Pass, log *logCall) {
+	if log.logger != "zap" {
+		return
+	}
+
+	sensitiveKeys := []string{
+		"password",
+		"pwd",
+		"pass",
+		"token",
+		"secret",
+		"api_key",
+		"apikey",
+		"credentials",
+	}
+
+	for _, arg := range log.call.Args[1:] {
+		call, ok := arg.(*ast.CallExpr)
+		if !ok {
+			continue
+		}
+
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			continue
+		}
+
+		funcName := sel.Sel.Name
+		if funcName == "" {
+			continue
+		}
+
+		if len(call.Args) == 0 {
+			continue
+		}
+
+		keyLit, ok := call.Args[0].(*ast.BasicLit)
+		if !ok || keyLit.Kind != token.STRING {
+			continue
+		}
+
+		key := strings.ToLower(keyLit.Value[1 : len(keyLit.Value)-1])
+
+		for _, sensitive := range sensitiveKeys {
+			if strings.Contains(key, sensitive) {
+				pass.Reportf(log.pos, "sensitive data in zap field")
+				return
+			}
 		}
 	}
 }

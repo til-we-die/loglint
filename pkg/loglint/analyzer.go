@@ -85,13 +85,37 @@ func extractLogMessage(call *ast.CallExpr) string {
 		return ""
 	}
 
-	firstArg := call.Args[0]
+	return extractStringFromExpr(call.Args[0])
+}
 
-	if lit, ok := firstArg.(*ast.BasicLit); ok && lit.Kind == token.STRING {
-		return lit.Value[1 : len(lit.Value)-1]
+func extractStringFromExpr(expr ast.Expr) string {
+	switch v := expr.(type) {
+
+	case *ast.BasicLit:
+		if v.Kind == token.STRING && len(v.Value) >= 2 {
+			return v.Value[1 : len(v.Value)-1]
+		}
+
+	case *ast.Ident:
+		if obj := v.Obj; obj != nil && obj.Kind == ast.Con {
+			if vs, ok := obj.Decl.(*ast.ValueSpec); ok && len(vs.Values) > 0 {
+				if lit, ok := vs.Values[0].(*ast.BasicLit); ok && lit.Kind == token.STRING {
+					return lit.Value[1 : len(lit.Value)-1]
+				}
+			}
+		}
+
+	case *ast.CallExpr:
+		if sel, ok := v.Fun.(*ast.SelectorExpr); ok {
+			if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "fmt" && sel.Sel.Name == "Sprintf" {
+				if len(v.Args) > 0 {
+					if lit, ok := v.Args[0].(*ast.BasicLit); ok && lit.Kind == token.STRING {
+						return lit.Value[1 : len(lit.Value)-1]
+					}
+				}
+			}
+		}
 	}
-
-	// добавить поддержку констант и переменных
 	return ""
 }
 
@@ -100,4 +124,5 @@ func checkRules(pass *analysis.Pass, log *logCall) {
 	checkEnglish(pass, log)
 	checkSpecialChars(pass, log)
 	checkSensitive(pass, log)
+	checkZapFields(pass, log)
 }
